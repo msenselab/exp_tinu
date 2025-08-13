@@ -146,19 +146,15 @@ psychoJS.experimentLogger.setLevel(core.Logger.ServerLevel.WARNING);
 
 // Experiment configuration - matches Python CONFIG
 const CONFIG = {
-    durations: [0.7, 0.8, 0.9, 1.1, 1.2, 1.3],  // Without mean of 1.0
-    numerosities: [8, 12, 16, 24, 28, 32],  // Without mean of 20
+    durations: [0.7,0.8,0.9, 1.1, 1.2, 1.3],  // Without mean of 1.0
+    numerosities: [8, 12,16, 24, 28, 32],  // Without mean of 20
     durationMean: 1.0,
     numerosityMean: 20,
     
     // Block structure: 2 of each type, randomly interleaved
-    nPracticeBlocks: 1,
     nPureDurationBlocks: 2,
     nPureNumerosityBlocks: 2,
     nMixedBlocks: 2,
-    practiceTrials: 18,  // Subset for practice (3 durations × 3 numerosities × 2 tasks)
-    trialsPerPureBlock: 36,  // 6 values × 6 repetitions = 36 trials per pure block
-    trialsPerMixedBlock: 72,  // 6 durations × 6 numerosities × 2 tasks = 72 trials
     
     // Timing parameters
     feedbackDuration: 0.5,
@@ -169,8 +165,6 @@ const CONFIG = {
     arrayRadius: 5,  // square area size (-5 to +5 in both x,y)
 };
 
-var currentLoop;
-var frameDur;
 async function updateInfo() {
   currentLoop = psychoJS.experiment;  // right now there are no loops
   expInfo['date'] = util.MonotonicClock.getDateStr();  // add a simple timestamp
@@ -180,10 +174,6 @@ async function updateInfo() {
 
   // store frame rate of monitor if we can measure it successfully
   expInfo['frameRate'] = psychoJS.window.getActualFrameRate();
-  if (typeof expInfo['frameRate'] !== 'undefined')
-    frameDur = 1.0 / Math.round(expInfo['frameRate']);
-  else
-    frameDur = 1.0 / 60.0; // couldn't get a reliable measure so guess
 
   // add info from the URL:
   util.addInfoFromUrl(expInfo);
@@ -218,12 +208,13 @@ var globalClock;
 var routineTimer;
 
 // Trial and block variables
+var currentLoop;
 var blockSequence = [];
 var currentBlockIdx = 0;
+var currentConditionIdx = 0;
 var currentMainBlockType;
 var practiceConditions = [];
 var currentConditions = [];
-var currentConditionIdx = 0;
 var currentBlockType = '';
 var isInPractice = true;
 
@@ -400,9 +391,8 @@ function createBlockSequence() {
 
 function createPracticeConditions() {
     const conditions = [];
-    // Use subset of conditions for practice: 3 durations × 3 numerosities × 2 tasks
-    const practiceDurations = [0.8, 1.0, 1.2];  // Include mean for practice
-    const practiceNumerosities = [12, 20, 28];   // Include mean for practice
+    const practiceDurations = [0.8, 1.2];  // Include mean for practice
+    const practiceNumerosities = [12, 28];   // Include mean for practice
     
     for (const duration of practiceDurations) {
         for (const numerosity of practiceNumerosities) {
@@ -491,7 +481,6 @@ function createDotArray(nDots) {
     
     // Create array of individual circle stimuli
     dotArray = [];
-    const dotRadius = (CONFIG.dotSize * 50) / 2; // Convert to radius in pixels
     
     for (let i = 0; i < nDots; i++) {
         const x = (Math.random() - 0.5) * 2 * areaSize; // -375 to +375 pixels
@@ -501,7 +490,7 @@ function createDotArray(nDots) {
             win: psychoJS.window,
             name: `dot_${i}`,
             edges: 32, // Use 32 edges to approximate a circle
-            radius: dotRadius,
+            size: [CONFIG.dotSize * 50, CONFIG.dotSize * 50],
             pos: [x, y],
             units: 'pix',
             fillColor: new util.Color('white'),
@@ -915,11 +904,18 @@ var _responseKey_allKeys;
 var trialMaxDuration;
 var trialComponents;
 var trialPhase;
-var trialStartTime;
 
 function trialRoutineBegin(snapshot) {
   return async function () {
     TrialHandler.fromSnapshot(snapshot);
+    
+    // Extract current trial variables from the snapshot
+    const currentTrial = snapshot.getCurrentTrial();
+    duration = currentTrial.duration;
+    numerosity = currentTrial.numerosity;
+    cue = currentTrial.cue;
+    
+    console.log('Trial started - Duration:', duration, 'Numerosity:', numerosity, 'Cue:', cue);
     
     t = 0;
     frameN = -1;
@@ -929,7 +925,6 @@ function trialRoutineBegin(snapshot) {
     routineTimer.reset();
     trialMaxDurationReached = false;
     trialPhase = 'fixation';
-    trialStartTime = trialClock.getTime();
     
     // Create dot array for this trial
     createDotArray(numerosity);
@@ -938,17 +933,13 @@ function trialRoutineBegin(snapshot) {
     let combinedText;
     const currentBlockType = isInPractice ? 'mixed' : currentMainBlockType;
     
-    if (currentBlockType === 'pure_duration') {
-        combinedText = "Duration\n\nShort (<--)  or  (-->) Long";
-    } else if (currentBlockType === 'pure_numerosity') {
-        combinedText = "Numerosity\n\nSmall (<--)  or  (-->) Large";
-    } else { // mixed blocks
-        const taskLine = cue === 'duration' ? 'Duration' : 'Numerosity';
-        const responseLine = cue === 'duration' ? 
-            "Short (<--)  or  (-->) Long" : 
-            "Small (<--)  or  (-->) Large";
-        combinedText = `${taskLine}\n\n${responseLine}`;
-    }
+
+    const taskLine = cue === 'duration' ? 'Duration' : 'Numerosity';
+    const responseLine = cue === 'duration' ? 
+        "Short (<--)  or  (-->) Long" : 
+        "Small (<--)  or  (-->) Large";
+    combinedText = `${taskLine}\n\n${responseLine}`;
+
     cueText.setText(combinedText);
     
     // Comprehensive key clearing at trial start
@@ -1271,9 +1262,15 @@ function feedbackRoutineEnd(snapshot) {
     responseKey.clearEvents();
     psychoJS.eventManager.clearEvents();
     
-    // Add ITI (inter-trial interval)
+    // Present blank screen for ITI (inter-trial interval) - similar to blank1/blank2
     const itiDuration = CONFIG.itiMin + Math.random() * (CONFIG.itiMax - CONFIG.itiMin);
+    
+    // Use the existing blankScreen stimulus for ITI
+    blankScreen.setAutoDraw(true);
+    
     await new Promise(resolve => setTimeout(resolve, itiDuration * 1000));
+    
+    blankScreen.setAutoDraw(false);
     
     return Scheduler.Event.NEXT;
   };
@@ -1298,37 +1295,7 @@ function blockInfoRoutineBegin(snapshot) {
     blockInfoMaxDurationReached = false;
     
   // Set block info message
-  let blockInfoMessage;
-  if (isInPractice) {
-    // After practice, show what the next block will be
-    let nextBlockType = blockSequence[0];
-    let nextBlockName = {
-      'pure_duration': 'Pure Duration',
-      'pure_numerosity': 'Pure Numerosity',
-      'mixed': 'Mixed'
-    }[nextBlockType];
-    blockInfoMessage = `Practice Block completed\n\nNext: ${nextBlockName} Block\n\nPress SPACE to continue...`;
-  } else {
-    // For main blocks, show what the next block will be (if any)
-    const blockType = currentMainBlockType;
-    const blockTypeName = {
-      'pure_duration': 'Pure Duration',
-      'pure_numerosity': 'Pure Numerosity',
-      'mixed': 'Mixed'
-    }[blockType];
-    let nextBlockName = '';
-    if (currentBlockIdx + 1 < blockSequence.length) {
-      let nextBlockType = blockSequence[currentBlockIdx + 1];
-      nextBlockName = {
-        'pure_duration': 'Pure Duration',
-        'pure_numerosity': 'Pure Numerosity',
-        'mixed': 'Mixed'
-      }[nextBlockType];
-      blockInfoMessage = `${blockTypeName} Block ${currentBlockIdx} completed\n\nNext: ${nextBlockName} Block\n\nPress SPACE to continue...`;
-    } else {
-      blockInfoMessage = `${blockTypeName} Block ${currentBlockIdx} completed\n\nThis was the last block.\n\nPress SPACE to continue...`;
-    }
-  }
+  let blockInfoMessage = 'Between Block Break...\n\nPress SPACE to continue';
   blockInfoText.setText(blockInfoMessage);
     
     blockInfoKey.keys = undefined;
